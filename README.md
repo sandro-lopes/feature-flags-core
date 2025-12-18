@@ -107,6 +107,9 @@ O domínio contém:
 │  │ - EvaluationContext                   │ │
 │  │ - SimpleEvaluationContext             │ │
 │  │ - HookContext                         │ │
+│  │ - banking/                            │ │
+│  │   - BankingAttributes                 │ │
+│  │   - BankingContextBuilder             │ │
 │  └──────────────────────────────────────┘ │
 │                                             │
 │  ┌──────────────────────────────────────┐ │
@@ -135,7 +138,10 @@ src/main/java/com/codingbetter/featureflags/
 │   │   ├── ErrorCode.java
 │   │   ├── EvaluationContext.java
 │   │   ├── SimpleEvaluationContext.java
-│   │   └── HookContext.java
+│   │   ├── HookContext.java
+│   │   └── banking/             # Contextos especializados por domínio
+│   │       ├── BankingAttributes.java
+│   │       └── BankingContextBuilder.java
 │   └── exception/               # Exceções do domínio
 │       ├── FeatureFlagException.java
 │       ├── FlagNotFoundException.java
@@ -410,6 +416,71 @@ if (evaluation.isSuccess()) {
 ```
 
 **Importante**: O tipo genérico `<T>` do método `getObjectValue` é inferido automaticamente pelo compilador Java baseado no tipo do parâmetro `defaultValue`. Quando você passa um objeto de um tipo específico (como `FeatureConfig`) como `defaultValue`, o Java automaticamente infere que `T = FeatureConfig`, permitindo que o método retorne o tipo correto sem necessidade de especificar explicitamente o tipo genérico.
+
+### Exemplo 5: Contexto Bancário Especializado
+
+Para sistemas bancários, a biblioteca fornece um builder especializado com atributos comuns do domínio bancário:
+
+```java
+import com.codingbetter.featureflags.port.inbound.FeatureFlagClient;
+import com.codingbetter.featureflags.domain.model.banking.BankingContextBuilder;
+import com.codingbetter.featureflags.domain.model.banking.BankingAttributes;
+
+// Criar contexto bancário com atributos específicos do domínio
+EvaluationContext context = BankingContextBuilder.builder()
+    .idConta("conta-12345")
+    .idCliente("cliente-67890")
+    .codigoAgencia("001")
+    .dac("5")
+    .tipoConta(BankingAttributes.TipoConta.CORRENTE)
+    .segmentoCliente(BankingAttributes.SegmentoCliente.PREMIUM)
+    .saldoConta(50000.0)
+    .scoreCredito(750)
+    .ehPremium(true)
+    .canal("mobile")
+    .regiao("SUDESTE")
+    .atributoCustomizado("tipoOperacao", "transferencia")
+    .build();
+
+// Avaliar flags usando o contexto bancário
+boolean novoFluxoTransferencia = client.getBooleanValue(
+    "novo-fluxo-transferencia", 
+    false, 
+    context
+);
+
+// Verificar limite de transação baseado no segmento e canal
+double limiteTransacao = client.getNumberValue(
+    "limite-transacao-diaria",
+    1000.0,
+    context
+);
+
+// Obter tema da interface baseado no canal
+String temaInterface = client.getStringValue(
+    "tema-interface",
+    "padrao",
+    context
+);
+
+// Exemplo: Habilitar funcionalidade apenas para clientes premium no canal mobile
+if (context.getStringAttribute(BankingAttributes.SEGMENTO_CLIENTE).equals("premium") 
+    && context.getStringAttribute(BankingAttributes.CANAL).equals("mobile")) {
+    
+    boolean funcionalidadeExclusiva = client.getBooleanValue(
+        "funcionalidade-exclusiva-premium-mobile",
+        false,
+        context
+    );
+}
+```
+
+**Vantagens do BankingContextBuilder**:
+- ✅ **Type-safe**: Métodos específicos para cada atributo bancário
+- ✅ **Padronização**: Constantes para evitar erros de digitação
+- ✅ **Extensível**: Suporte a atributos customizados via `atributoCustomizado()`
+- ✅ **Documentado**: JavaDoc completo com exemplos de uso
+- ✅ **Flexível**: Pode ser usado em conjunto com `SimpleEvaluationContext`
 
 ## 🔧 Implementação de Adapters
 
