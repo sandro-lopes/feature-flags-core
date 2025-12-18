@@ -11,8 +11,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * featureflags:
  *   rest:
  *     base-url: https://meu-host-interno/feature-toggle
- *     static-bearer-token: ${FEATURE_TOGGLE_TOKEN}
  * </pre>
+ *
+ * <p>Para autenticação, implemente {@link TokenProvider} como bean Spring para
+ * fornecer tokens quando não houver contexto HTTP disponível.
  */
 @ConfigurationProperties(prefix = "featureflags.rest")
 public class RestApiFeatureToggleProperties {
@@ -23,27 +25,12 @@ public class RestApiFeatureToggleProperties {
      */
     private String baseUrl;
 
-    /**
-     * Token Bearer estático opcional.
-     * Em cenários mais avançados, recomenda-se integrar com OAuth2 ou
-     * outro mecanismo de autenticação gerenciado externamente.
-     */
-    private String staticBearerToken;
-
     public String getBaseUrl() {
         return baseUrl;
     }
 
     public void setBaseUrl(String baseUrl) {
         this.baseUrl = baseUrl;
-    }
-
-    public String getStaticBearerToken() {
-        return staticBearerToken;
-    }
-
-    public void setStaticBearerToken(String staticBearerToken) {
-        this.staticBearerToken = staticBearerToken;
     }
 }
 

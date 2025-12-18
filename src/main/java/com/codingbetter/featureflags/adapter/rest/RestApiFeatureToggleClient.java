@@ -3,6 +3,7 @@ package com.codingbetter.featureflags.adapter.rest;
 import com.codingbetter.featureflags.domain.model.EvaluationContext;
 import com.codingbetter.featureflags.domain.model.banking.BankingAttributes;
 import com.codingbetter.featureflags.adapter.rest.dto.FuncionalidadeResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -12,6 +13,8 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.net.URI;
 import java.util.Map;
@@ -27,24 +30,25 @@ import java.util.Optional;
 public class RestApiFeatureToggleClient {
 
     private static final String HEADER_CANAL = "x-type-value-canal";
+    private static final String BEARER_PREFIX = "Bearer ";
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
-    private final String staticBearerToken;
+    private final TokenProvider tokenProvider;
 
     /**
      * Cria um novo cliente REST.
      *
-     * @param restTemplate     RestTemplate configurado pelo Spring Boot
-     * @param baseUrl          URL base da API de feature toggles (ex: https://api.interna/feature-toggle)
-     * @param staticBearerToken Token Bearer estático opcional (pode ser nulo se a autenticação for tratada externamente)
+     * @param restTemplate RestTemplate configurado pelo Spring Boot
+     * @param baseUrl      URL base da API de feature toggles (ex: https://api.interna/feature-toggle)
+     * @param tokenProvider Provider opcional para obter token quando não há contexto HTTP (pode ser nulo)
      */
     public RestApiFeatureToggleClient(RestTemplate restTemplate,
                                        String baseUrl,
-                                       String staticBearerToken) {
+                                       TokenProvider tokenProvider) {
         this.restTemplate = restTemplate;
         this.baseUrl = removeTrailingSlash(baseUrl);
-        this.staticBearerToken = staticBearerToken;
+        this.tokenProvider = tokenProvider;
     }
 
     /**
@@ -84,12 +88,43 @@ public class RestApiFeatureToggleClient {
         }
     }
 
+    /**
+     * Constrói os headers HTTP a partir do contexto de avaliação.
+     *
+     * <p>Estratégia para token de autenticação (em ordem de prioridade):
+     * <ol>
+     *   <li>Header "Authorization" do contexto HTTP da requisição atual (HttpServletRequest)</li>
+     *   <li>Token do TokenProvider configurado (fallback para chamadas fora de contexto HTTP)</li>
+     *   <li>Se nenhum token for encontrado, o header Authorization não é adicionado</li>
+     * </ol>
+     *
+     * <p>O token é obtido diretamente do contexto HTTP da requisição, sem passar pelo
+     * EvaluationContext, pois autenticação é uma preocupação de infraestrutura, não do domínio.
+     *
+     * <p>Se a API exigir autenticação e nenhum token for fornecido, a requisição falhará
+     * com HTTP 401, que será tratado como erro de rede pelo provider.
+     *
+     * @param context contexto de avaliação (pode ser nulo)
+     * @return headers HTTP configurados
+     */
     private HttpHeaders buildHeadersFromContext(EvaluationContext context) {
         HttpHeaders headers = new HttpHeaders();
         headers.setAccept(MediaType.parseMediaTypes(MediaType.APPLICATION_JSON_VALUE));
 
-        if (staticBearerToken != null && !staticBearerToken.isBlank()) {
-            headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + staticBearerToken);
+        // Estratégia para token: contexto HTTP da requisição > TokenProvider
+        String authorizationHeader = extractAuthorizationFromHttpRequest();
+        if (authorizationHeader != null && !authorizationHeader.isBlank()) {
+            headers.set(HttpHeaders.AUTHORIZATION, authorizationHeader);
+        } else if (tokenProvider != null) {
+            // Fallback para TokenProvider (útil para jobs, schedulers, etc.)
+            String token = tokenProvider.getToken();
+            if (token != null && !token.isBlank()) {
+                // Garante que o token tenha o prefixo "Bearer " se necessário
+                String formattedToken = token.startsWith(BEARER_PREFIX) 
+                    ? token 
+                    : BEARER_PREFIX + token;
+                headers.set(HttpHeaders.AUTHORIZATION, formattedToken);
+            }
         }
 
         if (context != null) {
@@ -99,6 +134,31 @@ public class RestApiFeatureToggleClient {
             }
         }
         return headers;
+    }
+
+    /**
+     * Extrai o header Authorization do contexto HTTP da requisição atual.
+     *
+     * <p>Este método acessa o HttpServletRequest através do RequestContextHolder do Spring,
+     * permitindo que o adapter obtenha o token de autenticação sem acoplar o domínio
+     * a detalhes de infraestrutura HTTP.
+     *
+     * @return valor do header Authorization (ex: "Bearer token123") ou null se não encontrado
+     */
+    private String extractAuthorizationFromHttpRequest() {
+        try {
+            ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes != null) {
+                HttpServletRequest request = attributes.getRequest();
+                if (request != null) {
+                    return request.getHeader(HttpHeaders.AUTHORIZATION);
+                }
+            }
+        } catch (Exception e) {
+            // Se não houver contexto de requisição (ex: chamada fora de thread HTTP),
+            // retorna null e usa o fallback do TokenProvider (se configurado)
+        }
+        return null;
     }
 
     /**

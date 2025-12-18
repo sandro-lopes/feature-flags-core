@@ -237,6 +237,96 @@ Hooks permitem interceptar e estender o comportamento da avaliação:
 - **Error**: Quando ocorre erro
 - **Finally**: Sempre ao final
 
+**Exemplo de implementação de Hook para logging:**
+
+```java
+package com.seuprojeto.hooks;
+
+import com.codingbetter.featureflags.port.inbound.Hook;
+import com.codingbetter.featureflags.domain.model.EvaluationContext;
+import com.codingbetter.featureflags.domain.model.FlagEvaluation;
+import com.codingbetter.featureflags.domain.model.HookContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class LoggingHook implements Hook {
+
+    private static final Logger log = LoggerFactory.getLogger(LoggingHook.class);
+    private static final String START_TIME_KEY = "startTime";
+
+    @Override
+    public void before(String flagKey, Object defaultValue, EvaluationContext context, HookContext hookContext) {
+        // Armazena o tempo de início para calcular duração depois
+        hookContext.set(START_TIME_KEY, System.currentTimeMillis());
+        
+        log.debug("Iniciando avaliação da flag: {} com valor padrão: {}", flagKey, defaultValue);
+        
+        if (context != null && context.getTargetingKey() != null) {
+            log.debug("Targeting key: {}", context.getTargetingKey());
+        }
+    }
+
+    @Override
+    public void after(String flagKey, FlagEvaluation<?> evaluation, HookContext hookContext) {
+        Long startTime = hookContext.get(START_TIME_KEY, Long.class);
+        long duration = startTime != null ? System.currentTimeMillis() - startTime : 0;
+        
+        if (evaluation.isSuccess()) {
+            log.info("Flag '{}' avaliada com sucesso. Valor: {}, Reason: {}, Variant: {}, Duração: {}ms",
+                    flagKey,
+                    evaluation.getValue(),
+                    evaluation.getReason(),
+                    evaluation.getVariant(),
+                    duration);
+        } else {
+            log.warn("Flag '{}' avaliada com erro. ErrorCode: {}, Mensagem: {}, Duração: {}ms",
+                    flagKey,
+                    evaluation.getErrorCode(),
+                    evaluation.getErrorMessage(),
+                    duration);
+        }
+    }
+
+    @Override
+    public void error(String flagKey, Exception error, HookContext hookContext) {
+        Long startTime = hookContext.get(START_TIME_KEY, Long.class);
+        long duration = startTime != null ? System.currentTimeMillis() - startTime : 0;
+        
+        log.error("Erro ao avaliar flag '{}' após {}ms: {}", flagKey, duration, error.getMessage(), error);
+    }
+
+    @Override
+    public void finallyAfter(String flagKey, HookContext hookContext) {
+        // Limpa dados temporários do contexto
+        hookContext.remove(START_TIME_KEY);
+        log.trace("Finalizada avaliação da flag: {}", flagKey);
+    }
+
+    @Override
+    public String getName() {
+        return "LoggingHook";
+    }
+}
+```
+
+**Uso do Hook em uma aplicação Spring Boot:**
+
+```java
+@Configuration
+public class FeatureFlagConfiguration {
+
+    @Bean
+    public FeatureFlagClient featureFlagClient(
+            FeatureFlagProvider provider,
+            List<Hook> hooks) {
+        // Hooks serão automaticamente injetados pelo Spring
+        return new DefaultFeatureFlagClient(provider, hooks);
+    }
+}
+```
+
 ## 🔌 Interfaces e Contratos
 
 ### FeatureFlagClient (Inbound Port)
@@ -517,32 +607,44 @@ Esta biblioteca já fornece um adapter REST pronto, implementado em `RestApiFeat
 featureflags:
   rest:
     base-url: https://seu-host-interno/feature-toggle
-    static-bearer-token: ${FEATURE_TOGGLE_TOKEN}
 ```
 
-**Uso em uma aplicação Spring Boot:**
+**Autenticação com Token:**
+
+O adapter obtém o token de autenticação automaticamente do contexto HTTP da requisição, sem necessidade de passar pelo `EvaluationContext` (o token não faz parte do domínio). A estratégia é:
+
+1. **Header Authorization do HttpServletRequest** (prioridade): O adapter detecta automaticamente o header `Authorization` da requisição HTTP atual
+2. **TokenProvider** (fallback opcional): Se não houver header na requisição e um `TokenProvider` estiver configurado, usa o token fornecido por ele
+
+**Exemplo de uso (token automático do contexto HTTP):**
 
 ```java
 import com.codingbetter.featureflags.port.inbound.FeatureFlagClient;
 import com.codingbetter.featureflags.domain.model.EvaluationContext;
 import com.codingbetter.featureflags.domain.model.banking.BankingContextBuilder;
-import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-@Service
-public class MinhaAplicacaoService {
+@RestController
+public class MinhaAplicacaoController {
 
     private final FeatureFlagClient featureFlagClient;
 
-    public MinhaAplicacaoService(FeatureFlagClient featureFlagClient) {
+    public MinhaAplicacaoController(FeatureFlagClient featureFlagClient) {
         this.featureFlagClient = featureFlagClient;
     }
 
+    @GetMapping("/minha-operacao")
     public void executar() {
+        // O adapter REST detecta automaticamente o header Authorization da requisição
+        // Não é necessário passar o token no EvaluationContext
+        
         EvaluationContext context = BankingContextBuilder.builder()
             .idConta("conta-12345")
             .canal("mobile")
             .build();
 
+        // O token será obtido automaticamente do HttpServletRequest
         boolean habilitada = featureFlagClient.getBooleanValue(
             "minha-jornada-chave",
             false,
@@ -555,6 +657,50 @@ public class MinhaAplicacaoService {
     }
 }
 ```
+
+**Exemplo: TokenProvider para chamadas fora de contexto HTTP:**
+
+Para chamadas que não estão em contexto de requisição HTTP (ex: jobs, schedulers), implemente `TokenProvider`:
+
+```java
+package com.seuprojeto.adapter;
+
+import com.codingbetter.featureflags.adapter.rest.TokenProvider;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+@Component
+public class MeuTokenProvider implements TokenProvider {
+
+    @Value("${feature-toggle.token}")
+    private String token;
+
+    @Override
+    public String getToken() {
+        // Pode retornar token estático, obter de OAuth2, cache, etc.
+        return "Bearer " + token;
+    }
+}
+```
+
+```java
+// Em um job ou scheduler (sem contexto HTTP)
+// O TokenProvider será usado automaticamente como fallback
+EvaluationContext context = BankingContextBuilder.builder()
+    .idConta("conta-12345")
+    .canal("mobile")
+    .build();
+
+boolean habilitada = featureFlagClient.getBooleanValue(
+    "minha-jornada-chave",
+    false,
+    context
+);
+```
+
+**Tratamento de erro quando token não é encontrado:**
+
+Se nenhum token for encontrado (nem do contexto HTTP nem do TokenProvider) e a API exigir autenticação, a requisição falhará com HTTP 401 (Unauthorized), que será tratado como `ErrorCode.NETWORK_ERROR` pelo provider. O valor padrão será retornado.
 
 O adapter REST é registrado automaticamente via configuração Spring (`RestApiFeatureToggleConfiguration`), expondo um `FeatureFlagProvider` pronto para uso. Caso você registre outro `FeatureFlagProvider` na aplicação, a anotação `@ConditionalOnMissingBean` garante que seu provider customizado possa substituir o padrão.
 

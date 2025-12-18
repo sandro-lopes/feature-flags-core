@@ -7,6 +7,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.Optional;
+
 /**
  * Configuração Spring Boot para registrar os beans necessários
  * do adapter REST de Feature Toggles.
@@ -29,12 +31,13 @@ public class RestApiFeatureToggleConfiguration {
     @ConditionalOnMissingBean(RestApiFeatureToggleClient.class)
     public RestApiFeatureToggleClient restApiFeatureToggleClient(
             RestTemplate featureFlagsRestTemplate,
-            RestApiFeatureToggleProperties properties
+            RestApiFeatureToggleProperties properties,
+            Optional<TokenProvider> tokenProvider
     ) {
         return new RestApiFeatureToggleClient(
                 featureFlagsRestTemplate,
                 properties.getBaseUrl(),
-                properties.getStaticBearerToken()
+                tokenProvider.orElse(null)
         );
     }
 
