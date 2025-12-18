@@ -17,7 +17,7 @@ Uma biblioteca Java que fornece interfaces e contratos baseados no padrão **Ope
 
 ## 🎯 Sobre o Projeto
 
-Esta biblioteca fornece uma camada de abstração baseada na especificação **OpenFeature** para trabalhar com feature flags em aplicações Java. Ela define contratos claros e bem documentados que permitem que diferentes projetos implementem adapters para se conectar com suas APIs REST de feature flags preferidas.
+Esta biblioteca fornece uma camada de abstração baseada na especificação **OpenFeature** para trabalhar com feature flags em aplicações Java. Ela define contratos claros e bem documentados, além de incluir um adapter REST padrão pronto para uso. Times podem também implementar adapters customizados para se conectar com suas APIs de feature flags específicas.
 
 ### Por que OpenFeature?
 
@@ -32,6 +32,7 @@ Esta biblioteca fornece uma camada de abstração baseada na especificação **O
 
 - ✅ **Baseado na especificação OpenFeature** - Segue os padrões e melhores práticas
 - ✅ **Arquitetura DDD + Hexagonal** - Separação clara entre domínio, ports e adapters
+- ✅ **Adapter REST padrão incluído** - Implementação pronta para uso com APIs REST
 - ✅ **Interfaces bem documentadas** - JavaDoc completo em todos os métodos
 - ✅ **Tipos seguros** - Suporte para Boolean, String, Number e Object
 - ✅ **Contexto de avaliação** - Suporte completo para targeting e segmentação
@@ -49,7 +50,7 @@ A arquitetura hexagonal separa o núcleo da aplicação (domínio) das tecnologi
 
 - **Inbound Ports**: Interfaces que o domínio expõe para o mundo externo (ex: `FeatureFlagClient`)
 - **Outbound Ports**: Interfaces que o domínio precisa de sistemas externos (ex: `FeatureFlagProvider`)
-- **Adapters**: Implementações concretas dos ports (a serem implementados pelos usuários)
+- **Adapters**: Implementações concretas dos ports (a biblioteca já fornece um adapter REST padrão; times podem implementar adapters customizados conforme necessário)
 
 ### Domain-Driven Design (DDD)
 
@@ -73,11 +74,11 @@ O domínio contém:
 ┌───────────────┐            ┌─────────────────┐
 │ Inbound       │            │ Outbound        │
 │ Adapters      │            │ Adapters        │
-│ (Futuro)      │            │ (Você implementa)│
-│               │            │                 │
-│ - REST        │            │ - REST Provider │
-│   Controller  │            │ - LaunchDarkly  │
-│ - CLI         │            │ - Split.io      │
+│ (Futuro)      │            │                 │
+│               │            │ - REST Provider │
+│ - REST        │            │   (padrão)      │
+│   Controller  │            │ - Customizado   │
+│ - CLI         │            │   (opcional)    │
 └───────┬───────┘            └────────┬────────┘
         │                             │
         │                             │
@@ -113,6 +114,14 @@ O domínio contém:
 │  └──────────────────────────────────────┘ │
 │                                             │
 │  ┌──────────────────────────────────────┐ │
+│  │ Adapters (Infraestrutura)             │ │
+│  │ - adapter/rest/                       │ │
+│  │   - RestApiFeatureFlagProvider        │ │
+│  │   - RestApiFeatureToggleClient        │ │
+│  │   - RestApiFeatureToggleConfiguration │ │
+│  └──────────────────────────────────────┘ │
+│                                             │
+│  ┌──────────────────────────────────────┐ │
 │  │ Exceções                             │ │
 │  │ - FeatureFlagException               │ │
 │  │ - FlagNotFoundException              │ │
@@ -129,7 +138,6 @@ O projeto segue uma arquitetura DDD + Hexagonal com a seguinte estrutura:
 
 ```
 src/main/java/com/codingbetter/featureflags/
-├── FeatureFlagsApplication.java  # Classe principal Spring Boot
 ├── domain/                       # Núcleo do domínio (DDD)
 │   ├── model/                   # Entidades e Value Objects
 │   │   ├── ValueType.java
@@ -148,6 +156,14 @@ src/main/java/com/codingbetter/featureflags/
 │       ├── TypeMismatchException.java
 │       ├── ProviderNotReadyException.java
 │       └── EvaluationException.java
+├── adapter/                     # Adapters (Infraestrutura)
+│   └── rest/                    # Adapter REST padrão
+│       ├── RestApiFeatureFlagProvider.java
+│       ├── RestApiFeatureToggleClient.java
+│       ├── RestApiFeatureToggleConfiguration.java
+│       ├── RestApiFeatureToggleProperties.java
+│       └── dto/
+│           └── FuncionalidadeResponse.java
 └── port/                        # Ports (Arquitetura Hexagonal)
     ├── inbound/                 # Inbound Ports (driving - interfaces que o domínio expõe)
     │   ├── FeatureFlagClient.java
@@ -161,7 +177,7 @@ src/main/java/com/codingbetter/featureflags/
 - **Domain**: Contém os modelos, value objects e exceções do domínio de feature flags (núcleo puro, sem dependências externas)
 - **Port/Inbound**: Interfaces que o domínio expõe para o mundo externo (ex: `FeatureFlagClient`, `Hook`)
 - **Port/Outbound**: Interfaces que o domínio precisa de sistemas externos (ex: `FeatureFlagProvider`)
-- **Infrastructure**: (A ser implementado pelos usuários) Adapters para APIs REST específicas
+- **Adapter**: Implementações concretas dos adapters (ex: `RestApiFeatureFlagProvider` para integração REST)
 
 ## 🧠 Conceitos Principais
 
@@ -188,7 +204,7 @@ String theme = client.getStringValue("theme", "default", context);
 
 ### Feature Flag Provider (Outbound Port)
 
-O `FeatureFlagProvider` é a interface que deve ser implementada para conectar-se a um sistema de feature flags específico (API REST, LaunchDarkly, Split.io, etc.). É responsável por:
+O `FeatureFlagProvider` é a interface que define o contrato para conectar-se a sistemas de feature flags. A biblioteca já fornece uma implementação padrão (`RestApiFeatureFlagProvider`) para APIs REST, mas times podem implementar adapters customizados para outros provedores (LaunchDarkly, Split.io, etc.). É responsável por:
 
 - Conectar-se ao sistema de feature flags
 - Avaliar flags baseado no contexto
@@ -484,72 +500,106 @@ if (context.getStringAttribute(BankingAttributes.SEGMENTO_CLIENTE).equals("premi
 
 ## 🔧 Implementação de Adapters
 
-Para usar esta biblioteca, você precisará implementar os adapters na camada de infraestrutura. Aqui está um guia básico:
+A biblioteca segue Arquitetura Hexagonal: o domínio expõe apenas contratos (`FeatureFlagClient`, `FeatureFlagProvider`) e a camada de adapter fornece as implementações concretas.
 
-### Passo 1: Implementar FeatureFlagProvider (Outbound Adapter)
+Atualmente existem duas abordagens:
+
+- **Adapter pronto para uso**: implementação padrão baseada na API REST de Feature Toggles (conforme contrato OpenAPI).
+- **Adapters customizados**: cada time pode implementar o próprio adapter seguindo o contrato `FeatureFlagProvider`.
+
+### Adapter Padrão: RestApiFeatureFlagProvider (REST)
+
+Esta biblioteca já fornece um adapter REST pronto, implementado em `RestApiFeatureFlagProvider`, que integra com a API de consulta de funcionalidades via REST.
+
+**Configuração (Spring Boot):**
+
+```yaml
+featureflags:
+  rest:
+    base-url: https://seu-host-interno/feature-toggle
+    static-bearer-token: ${FEATURE_TOGGLE_TOKEN}
+```
+
+**Uso em uma aplicação Spring Boot:**
 
 ```java
-package com.seuprojeto.infrastructure.adapter;
+import com.codingbetter.featureflags.port.inbound.FeatureFlagClient;
+import com.codingbetter.featureflags.domain.model.EvaluationContext;
+import com.codingbetter.featureflags.domain.model.banking.BankingContextBuilder;
+import org.springframework.stereotype.Service;
+
+@Service
+public class MinhaAplicacaoService {
+
+    private final FeatureFlagClient featureFlagClient;
+
+    public MinhaAplicacaoService(FeatureFlagClient featureFlagClient) {
+        this.featureFlagClient = featureFlagClient;
+    }
+
+    public void executar() {
+        EvaluationContext context = BankingContextBuilder.builder()
+            .idConta("conta-12345")
+            .canal("mobile")
+            .build();
+
+        boolean habilitada = featureFlagClient.getBooleanValue(
+            "minha-jornada-chave",
+            false,
+            context
+        );
+
+        if (habilitada) {
+            // executar nova jornada
+        }
+    }
+}
+```
+
+O adapter REST é registrado automaticamente via configuração Spring (`RestApiFeatureToggleConfiguration`), expondo um `FeatureFlagProvider` pronto para uso. Caso você registre outro `FeatureFlagProvider` na aplicação, a anotação `@ConditionalOnMissingBean` garante que seu provider customizado possa substituir o padrão.
+
+### Adapters Customizados (Outbound Adapter)
+
+Caso seu time utilize outro provedor (LaunchDarkly, Flagsmith, outra API interna, etc.), você pode implementar seu próprio adapter seguindo o contrato `FeatureFlagProvider`:
+
+```java
+package com.seuprojeto.adapter;
 
 import com.codingbetter.featureflags.port.outbound.FeatureFlagProvider;
 import com.codingbetter.featureflags.domain.model.*;
 
-public class RestApiFeatureFlagProvider implements FeatureFlagProvider {
-    
-    private final RestClient restClient;
-    private final String apiUrl;
-    
-    public RestApiFeatureFlagProvider(RestClient restClient, String apiUrl) {
-        this.restClient = restClient;
-        this.apiUrl = apiUrl;
-    }
+@Configuration
+public class MeuFeatureFlagProvider implements FeatureFlagProvider {
     
     @Override
     public FlagEvaluation<Boolean> getBooleanValue(
             String flagKey, 
             Boolean defaultValue, 
             EvaluationContext context) {
-        
-        try {
-            // Fazer chamada REST para sua API
-            FlagResponse response = restClient.get(apiUrl + "/flags/" + flagKey, context);
-            
-            // Converter resposta para FlagEvaluation
-            return new FlagEvaluation<>(
-                response.getBooleanValue(),
-                response.getVariant(),
-                response.getReason(),
-                new FlagMetadata(response.getMetadata())
-            );
-        } catch (Exception e) {
-            return new FlagEvaluation<>(
-                defaultValue,
-                ErrorCode.NETWORK_ERROR,
-                e.getMessage(),
-                new FlagMetadata()
-            );
-        }
+        // Implementação específica do seu provedor
+        // ...
     }
     
-    // Implementar outros métodos...
+    // Implementar os demais métodos de acordo com o contrato...
     
     @Override
     public String getName() {
-        return "RestApiProvider";
+        return "MeuFeatureFlagProvider";
     }
     
     @Override
     public boolean isReady() {
-        // Verificar se a conexão está ativa
-        return restClient.isConnected();
+        return true;
     }
 }
 ```
 
-### Passo 2: Implementar FeatureFlagClient (Inbound Adapter)
+Ao registrar seu próprio `FeatureFlagProvider` como bean Spring, o adapter padrão será automaticamente desabilitado devido ao `@ConditionalOnMissingBean`.
+
+### Implementar FeatureFlagClient (Inbound Adapter)
 
 ```java
-package com.seuprojeto.infrastructure.adapter;
+package com.seuprojeto.adapter;
 
 import com.codingbetter.featureflags.port.inbound.FeatureFlagClient;
 import com.codingbetter.featureflags.port.inbound.Hook;
@@ -614,26 +664,6 @@ public class DefaultFeatureFlagClient implements FeatureFlagClient {
 }
 ```
 
-### Passo 3: Configurar e Usar
-
-```java
-// Criar provider (outbound adapter)
-RestClient restClient = new RestClient();
-FeatureFlagProvider provider = new RestApiFeatureFlagProvider(restClient, "https://api.example.com");
-
-// Criar hooks (opcional)
-List<Hook> hooks = Arrays.asList(
-    new LoggingHook(),
-    new MetricsHook()
-);
-
-// Criar client (inbound adapter)
-FeatureFlagClient client = new DefaultFeatureFlagClient(provider, hooks);
-
-// Usar
-boolean enabled = client.getBooleanValue("my-feature", false);
-```
-
 ## 📚 Documentação da API
 
 ### Tipos de Valores Suportados
@@ -668,15 +698,15 @@ As razões comuns retornadas em `FlagEvaluation.getReason()`:
 
 ## 🤝 Contribuindo
 
-Contribuições são bem-vindas! Esta biblioteca fornece apenas os contratos e interfaces. As implementações dos adapters devem ser criadas em projetos separados ou na camada de infraestrutura.
+Contribuições são bem-vindas! Esta biblioteca fornece os contratos, interfaces e um adapter REST padrão. Times podem implementar adapters customizados conforme suas necessidades.
 
 ### Próximos Passos
 
-1. Implementar adapters para APIs REST específicas
-2. Adicionar suporte a cache
-3. Implementar hooks padrão (logging, métricas)
-4. Adicionar testes unitários para as interfaces
-5. Criar exemplos de uso mais detalhados
+1. Adicionar suporte a cache
+2. Implementar hooks padrão (logging, métricas)
+3. Adicionar testes unitários para as interfaces
+4. Criar exemplos de uso mais detalhados
+5. Adicionar suporte a múltiplos adapters simultâneos
 
 ## 📖 Referências
 
@@ -691,4 +721,4 @@ Este projeto está licenciado sob a Licença Apache 2.0.
 
 ---
 
-**Nota**: Esta biblioteca fornece apenas as interfaces e contratos. As implementações dos adapters devem ser criadas para conectar-se às suas APIs REST específicas.
+**Nota**: Esta biblioteca fornece as interfaces, contratos e um adapter REST padrão. Times podem implementar adapters customizados para conectar-se às suas APIs específicas, seguindo o contrato `FeatureFlagProvider`.
